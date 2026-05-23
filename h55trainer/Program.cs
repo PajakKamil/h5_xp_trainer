@@ -6,14 +6,11 @@ namespace Heroes5Trainer
 {
     internal static class Program
     {
-        // Kod klawisza F2 w systemie Windows oraz maska "najwyzszego bitu" stanu klawisza.
+        // Kod klawisza F2 w systemie Windows oraz maska "najwyższego bitu" stanu klawisza.
         private const int ToggleKey = 0x71;
         private const int KeyPressedMask = 0x8000;
 
-        // Nazwa procesu gry (bez rozszerzenia .exe).
-        private const string GameProcessName = "MMH55_64";
-
-        // Czasy uspienia petli w milisekundach.
+        // Czasy uśpienia pętli w milisekundach.
         private const int WaitForGameDelayMs = 1000;
         private const int DebounceDelayMs = 500;
         private const int IdleDelayMs = 10;
@@ -22,46 +19,60 @@ namespace Heroes5Trainer
         {
             Console.OutputEncoding = Encoding.UTF8;
             Console.Title = "Heroes 5 XP Trainer - Console Edition";
-            Console.WriteLine("=============================================");
-            Console.WriteLine("  Heroes 5 XP Trainer (Console App)");
-            Console.WriteLine("=============================================");
-            Console.WriteLine($"Oczekiwanie na uruchomienie gry ({GameProcessName}.exe)...");
+            PrintHeader();
 
-            using GameMemory memory = new GameMemory();
-
-            // Pętla czekająca, aż gra zostanie uruchomiona.
-            while (!memory.TryFindProcess(GameProcessName))
-                Thread.Sleep(WaitForGameDelayMs);
-
-            // Otwieramy proces gry z uprawnieniami do edycji pamięci.
-            if (!memory.OpenForEditing())
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[BŁĄD] Nie udało się uzyskać dostępu do pamięci gry!");
-                Console.WriteLine("Uruchom ten program jako Administrator.");
-                Console.ResetColor();
-                Console.ReadLine();
-                return;
-            }
-
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[SUKCES] Podpięto pod Heroes 5!");
-            Console.ResetColor();
-            Console.WriteLine("---------------------------------------------");
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("INSTRUKCJA:");
-            Console.WriteLine("1. Wciśnij [F2] w dowolnym momencie gry, aby AKTYWOWAĆ modyfikację.");
-            Console.WriteLine("2. Wejdź w grze w jakąkolwiek interakcję dającą XP (walka, skrzynia).");
-            Console.WriteLine($"3. Twój bohater natychmiast otrzyma {XpPatch.XpBonus:N0} XP i wbije poziomy!");
-            Console.ResetColor();
-            Console.WriteLine("---------------------------------------------");
-
-            XpPatch patch = new XpPatch(memory);
-
-            // Główna pętla programu działająca w tle.
+            // Każdy obieg pętli to jedna sesja gry: czekamy na grę, podpinamy się,
+            // działamy aż do jej zamknięcia, po czym wracamy do oczekiwania.
             while (true)
             {
-                // Sprawdzamy, czy klawisz F5 został wciśnięty (najwyższy bit stanu klawisza).
+                using GameMemory memory = new GameMemory();
+
+                if (!AttachToGame(memory))
+                    return;
+
+                GameTarget target = GameTarget.FromProcessName(memory.GameProcess!.ProcessName)!;
+                PrintReady(target);
+
+                RunTrainerLoop(memory, new XpPatch(memory, target));
+
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine();
+                Console.WriteLine("[INFO] Gra została zamknięta. Powrót do oczekiwania na grę...");
+                Console.ResetColor();
+            }
+        }
+
+        /// <summary>
+        /// Czeka, aż któraś z obsługiwanych wersji gry zostanie uruchomiona,
+        /// po czym podpina się do jej pamięci.
+        /// Zwraca false, gdy brak uprawnień administratora - program powinien się wtedy zakończyć.
+        /// </summary>
+        private static bool AttachToGame(GameMemory memory)
+        {
+            Console.WriteLine(
+                $"Oczekiwanie na uruchomienie gry ({string.Join(" / ", GameTarget.ModuleNames)})...");
+
+            while (!memory.TryFindProcess(GameTarget.ProcessNames))
+                Thread.Sleep(WaitForGameDelayMs);
+
+            if (memory.OpenForEditing())
+                return true;
+
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("[BŁĄD] Nie udało się uzyskać dostępu do pamięci gry!");
+            Console.WriteLine("Uruchom ten program jako Administrator.");
+            Console.ResetColor();
+            Console.WriteLine("Naciśnij Enter, aby zamknąć...");
+            Console.ReadLine();
+            return false;
+        }
+
+        /// <summary>Główna pętla sesji: reaguje na klawisz F2 aż do zamknięcia gry.</summary>
+        private static void RunTrainerLoop(GameMemory memory, XpPatch patch)
+        {
+            while (memory.IsGameRunning)
+            {
+                // Najwyższy bit stanu klawisza oznacza, że F2 jest właśnie wciśnięty.
                 if ((NativeMethods.GetAsyncKeyState(ToggleKey) & KeyPressedMask) != 0)
                 {
                     ToggleTrainer(patch);
@@ -106,6 +117,29 @@ namespace Heroes5Trainer
             {
                 Console.ResetColor();
             }
+        }
+
+        private static void PrintHeader()
+        {
+            Console.WriteLine("=============================================");
+            Console.WriteLine("  Heroes 5 XP Trainer (Console App)");
+            Console.WriteLine("=============================================");
+        }
+
+        /// <summary>Wypisuje potwierdzenie podpięcia oraz instrukcję obsługi.</summary>
+        private static void PrintReady(GameTarget target)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"[SUKCES] Podpięto pod grę: {target.ModuleName}");
+            Console.ResetColor();
+            Console.WriteLine("---------------------------------------------");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("INSTRUKCJA:");
+            Console.WriteLine("1. Wciśnij [F2] w dowolnym momencie gry, aby AKTYWOWAĆ modyfikację.");
+            Console.WriteLine("2. Wejdź w grze w jakąkolwiek interakcję dającą XP (walka, skrzynia).");
+            Console.WriteLine($"3. Twój bohater natychmiast otrzyma {XpPatch.XpBonus:N0} XP i wbije poziomy!");
+            Console.ResetColor();
+            Console.WriteLine("---------------------------------------------");
         }
     }
 }

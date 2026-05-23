@@ -13,18 +13,32 @@ namespace Heroes5Trainer
         /// <summary>Proces gry, do ktorego jestesmy podpieci (null przed znalezieniem).</summary>
         public Process? GameProcess { get; private set; }
 
+        /// <summary>Czy podpiety proces gry wciaz dziala (false, gdy gra zostala zamknieta).</summary>
+        public bool IsGameRunning => GameProcess is { HasExited: false };
+
         /// <summary>
-        /// Szuka uruchomionego procesu o podanej nazwie (bez rozszerzenia .exe).
+        /// Szuka uruchomionego procesu o jednej z podanych nazw (bez rozszerzenia .exe).
+        /// Nazwy sprawdzane sa po kolei; wygrywa pierwsza dopasowana.
         /// Zwraca true, jesli proces zostal znaleziony.
         /// </summary>
-        public bool TryFindProcess(string processName)
+        public bool TryFindProcess(params string[] processNames)
         {
-            Process[] matches = Process.GetProcessesByName(processName);
-            if (matches.Length == 0)
-                return false;
+            foreach (string processName in processNames)
+            {
+                Process[] matches = Process.GetProcessesByName(processName);
+                if (matches.Length == 0)
+                    continue;
 
-            GameProcess = matches[0];
-            return true;
+                GameProcess?.Dispose();
+                GameProcess = matches[0];
+
+                for (int i = 1; i < matches.Length; i++)
+                    matches[i].Dispose();
+
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -35,6 +49,12 @@ namespace Heroes5Trainer
         {
             if (GameProcess is null)
                 throw new InvalidOperationException("Najpierw nalezy znalezc proces gry (TryFindProcess).");
+
+            if (processHandle != 0)
+            {
+                NativeMethods.CloseHandle(processHandle);
+                processHandle = 0;
+            }
 
             const int desiredAccess = NativeMethods.PROCESS_VM_OPERATION
                                     | NativeMethods.PROCESS_VM_READ

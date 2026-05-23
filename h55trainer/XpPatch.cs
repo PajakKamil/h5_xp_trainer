@@ -13,11 +13,6 @@ namespace Heroes5Trainer
     /// </summary>
     internal sealed class XpPatch
     {
-        // Adres modyfikowanego kodu: modul gry + offset znaleziony w Cheat Engine.
-        // MMH55_64.exe+5FBCE3 (absolutnie 009FBCE3 przy bazie modulu 0x400000).
-        private const string ModuleName = "MMH55_64.exe";
-        private const int CodeOffset = 0x5FBCE3;
-
         /// <summary>Ilosc XP dodawana przy kazdym zdobyciu doswiadczenia.</summary>
         public const int XpBonus = 2_000_000_000;
 
@@ -27,12 +22,12 @@ namespace Heroes5Trainer
         // WAZNE: tyle bajtow nadpisujemy w miejscu hooka. Wartosc musi byc:
         //  - co najmniej 5 (tyle zajmuje instrukcja 'jmp rel32'),
         //  - rowna pelnej liczbie CALYCH instrukcji liczonych od adresu hooka.
-        // Dezasemblacja z Cheat Engine pod adresem hooka:
-        //   009FBCE3 - 89 77 60 - mov [edi+60],esi  (3 bajty)
-        //   009FBCE6 - 8B 55 00 - mov edx,[ebp+00]  (3 bajty)
+        // Dezasemblacja spod adresu hooka jest identyczna w obu obslugiwanych grach:
+        //   89 77 60 - mov [edi+60],esi  (3 bajty)
+        //   8B 55 00 - mov edx,[ebp+00]  (3 bajty)
         // 3 bajty to za malo na 'jmp rel32', wiec doliczamy druga instrukcje:
         // 3 + 3 = 6. Hook nadpisuje wiec dwie pelne instrukcje (6 bajtow).
-        // KONIECZNIE zweryfikuj te liczbe w dezasemblerze Cheat Engine - bledna
+        // KONIECZNIE zweryfikuj te liczbe przy dodawaniu nowej wersji gry - bledna
         // wartosc rozjedzie sie z granica instrukcji i spowoduje crash gry.
         private const int StolenByteCount = 6;
 
@@ -43,11 +38,16 @@ namespace Heroes5Trainer
         private static readonly byte[] AddEsiOpcode = { 0x81, 0xC6 }; // add esi, imm32
 
         private readonly GameMemory memory;
+        private readonly GameTarget target;
         private nint hookAddress;
         private nint caveAddress;
         private byte[]? originalBytes;
 
-        public XpPatch(GameMemory memory) => this.memory = memory;
+        public XpPatch(GameMemory memory, GameTarget target)
+        {
+            this.memory = memory;
+            this.target = target;
+        }
 
         /// <summary>Czy modyfikacja jest obecnie zainstalowana w grze.</summary>
         public bool IsInstalled => caveAddress != 0;
@@ -61,7 +61,7 @@ namespace Heroes5Trainer
             if (IsInstalled)
                 return;
 
-            hookAddress = memory.ResolveAddress(ModuleName, CodeOffset);
+            hookAddress = memory.ResolveAddress(target.ModuleName, target.CodeOffset);
 
             // Zapamietujemy oryginalne bajty, by moc je pozniej przywrocic.
             originalBytes = memory.ReadBytes(hookAddress, StolenByteCount);
@@ -81,11 +81,22 @@ namespace Heroes5Trainer
             byte[] caveCode = BuildCaveCode();
             caveAddress = memory.Allocate(caveCode.Length);
 
-            WriteReturnJump(caveCode);
-            memory.WriteBytes(caveAddress, caveCode);
+            try
+            {
+                WriteReturnJump(caveCode);
+                memory.WriteBytes(caveAddress, caveCode);
 
-            // Na koniec podmieniamy oryginalna instrukcje na skok do code cave.
-            memory.WriteBytes(hookAddress, BuildHookJump());
+                // Na koniec podmieniamy oryginalna instrukcje na skok do code cave.
+                memory.WriteBytes(hookAddress, BuildHookJump());
+            }
+            catch
+            {
+                // Instalacja przerwana w polowie - zwalniamy code cave i czyscimy stan,
+                // by nie zostawic w grze osieroconej pamieci ani falszywego "zainstalowano".
+                memory.Free(caveAddress);
+                caveAddress = 0;
+                throw;
+            }
         }
 
         /// <summary>Przywraca oryginalny kod gry i zwalnia code cave.</summary>
