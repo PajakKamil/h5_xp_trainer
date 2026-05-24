@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 
@@ -6,23 +7,33 @@ namespace Heroes5Trainer
 {
     internal static class Program
     {
-        // Kod klawisza F2 w systemie Windows oraz maska "najwyższego bitu" stanu klawisza.
-        private const int ToggleKey = 0x71;
+        // Kody klawiszy Windows Virtual-Key (F2..F11).
+        private const int KeyXpPatchToggle = 0x71;     // F2 - cave XP bonus przy zdobyciu XP
+        private const int KeyTrackerToggle = 0x72;     // F3 - install/uninstall ActiveHeroTracker
+        private const int KeyShowSnapshot  = 0x73;     // F4 - wypisz statystyki aktywnego bohatera
+        private const int KeySetAttack     = 0x74;     // F5
+        private const int KeySetDefense    = 0x75;     // F6
+        private const int KeySetSpell      = 0x76;     // F7
+        private const int KeySetKnowledge  = 0x77;     // F8
+        private const int KeyRefillMana    = 0x78;     // F9
+        private const int KeyToggleFreezeAttack = 0x79;// F10
+        private const int KeyAddXp         = 0x7A;     // F11
+
         private const int KeyPressedMask = 0x8000;
 
-        // Czasy uśpienia pętli w milisekundach.
+        // Czasy uspienia oraz wartosci docelowe (zeby nie bylo magic numbers).
         private const int WaitForGameDelayMs = 1000;
-        private const int DebounceDelayMs = 500;
+        private const int PerKeyDebounceMs = 350;
         private const int IdleDelayMs = 10;
+        private const int DefaultStatValue = 99;
+        private const int XpQuickBonus = 1_000_000;
 
         private static void Main()
         {
             Console.OutputEncoding = Encoding.UTF8;
-            Console.Title = "Heroes 5 XP Trainer - Console Edition";
+            Console.Title = "Heroes 5 Trainer - Console Edition";
             PrintHeader();
 
-            // Każdy obieg pętli to jedna sesja gry: czekamy na grę, podpinamy się,
-            // działamy aż do jej zamknięcia, po czym wracamy do oczekiwania.
             while (true)
             {
                 using GameMemory memory = new GameMemory();
@@ -33,20 +44,24 @@ namespace Heroes5Trainer
                 GameTarget target = GameTarget.FromProcessName(memory.GameProcess!.ProcessName)!;
                 PrintReady(target);
 
-                RunTrainerLoop(memory, new XpPatch(memory, target));
+                XpPatch xpPatch = new XpPatch(memory, target);
+                ActiveHeroTracker tracker = new ActiveHeroTracker(memory, target);
+                using FreezeManager freeze = new FreezeManager(memory, tracker);
+                freeze.Start();
+
+                RunTrainerLoop(memory, xpPatch, tracker, freeze);
+
+                // Gra znikla - zatrzymujemy watek freeze, nie probujemy uninstall hookow
+                // (proces juz nie zyje, zapisy by sie wywrocily).
+                freeze.Stop();
 
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine();
-                Console.WriteLine("[INFO] Gra została zamknięta. Powrót do oczekiwania na grę...");
+                Console.WriteLine("[INFO] Gra zostala zamknieta. Powrot do oczekiwania na gre...");
                 Console.ResetColor();
             }
         }
 
-        /// <summary>
-        /// Czeka, aż któraś z obsługiwanych wersji gry zostanie uruchomiona,
-        /// po czym podpina się do jej pamięci.
-        /// Zwraca false, gdy brak uprawnień administratora - program powinien się wtedy zakończyć.
-        /// </summary>
         private static bool AttachToGame(GameMemory memory)
         {
             Console.WriteLine(
@@ -59,85 +74,197 @@ namespace Heroes5Trainer
                 return true;
 
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[BŁĄD] Nie udało się uzyskać dostępu do pamięci gry!");
+            Console.WriteLine("[BLAD] Nie udalo sie uzyskac dostepu do pamieci gry!");
             Console.WriteLine("Uruchom ten program jako Administrator.");
             Console.ResetColor();
-            Console.WriteLine("Naciśnij Enter, aby zamknąć...");
+            Console.WriteLine("Nacisnij Enter, aby zamknac...");
             Console.ReadLine();
             return false;
         }
 
-        /// <summary>Główna pętla sesji: reaguje na klawisz F2 aż do zamknięcia gry.</summary>
-        private static void RunTrainerLoop(GameMemory memory, XpPatch patch)
+        private static void RunTrainerLoop(
+            GameMemory memory, XpPatch xpPatch, ActiveHeroTracker tracker, FreezeManager freeze)
         {
+            // Per-klawisz debounce - inaczej rozne klawisze blokowalyby sie nawzajem
+            // przez globalny Thread.Sleep.
+            Dictionary<int, long> lastPressedAtMs = new Dictionary<int, long>();
+
             while (memory.IsGameRunning)
             {
-                // Najwyższy bit stanu klawisza oznacza, że F2 jest właśnie wciśnięty.
-                if ((NativeMethods.GetAsyncKeyState(ToggleKey) & KeyPressedMask) != 0)
-                {
-                    ToggleTrainer(patch);
+                HandleKey(KeyXpPatchToggle,      lastPressedAtMs, () => ToggleXpPatch(xpPatch));
+                HandleKey(KeyTrackerToggle,      lastPressedAtMs, () => ToggleTracker(tracker));
+                HandleKey(KeyShowSnapshot,       lastPressedAtMs, () => ShowSnapshot(memory, tracker));
+                HandleKey(KeySetAttack,          lastPressedAtMs, () => SetStat(memory, tracker, "atak",       HeroStats.AttackOffset,     DefaultStatValue));
+                HandleKey(KeySetDefense,         lastPressedAtMs, () => SetStat(memory, tracker, "obrona",     HeroStats.DefenseOffset,    DefaultStatValue));
+                HandleKey(KeySetSpell,           lastPressedAtMs, () => SetStat(memory, tracker, "spell power",HeroStats.SpellPowerOffset, DefaultStatValue));
+                HandleKey(KeySetKnowledge,       lastPressedAtMs, () => SetStat(memory, tracker, "wiedza",     HeroStats.KnowledgeOffset,  DefaultStatValue));
+                HandleKey(KeyRefillMana,         lastPressedAtMs, () => RefillMana(memory, tracker));
+                HandleKey(KeyToggleFreezeAttack, lastPressedAtMs, () => ToggleFreezeAttack(freeze));
+                HandleKey(KeyAddXp,              lastPressedAtMs, () => AddXp(memory, tracker, XpQuickBonus));
 
-                    // Zabezpieczenie przed wielokrotnym przełączeniem przy jednym wciśnięciu.
-                    Thread.Sleep(DebounceDelayMs);
-                }
-
-                // Mały odpoczynek dla procesora.
                 Thread.Sleep(IdleDelayMs);
             }
         }
 
-        /// <summary>Włącza lub wyłącza modyfikację XP i wypisuje wynik na konsolę.</summary>
-        private static void ToggleTrainer(XpPatch patch)
+        private static void HandleKey(int virtualKey, Dictionary<int, long> lastPressedAtMs, Action action)
+        {
+            if ((NativeMethods.GetAsyncKeyState(virtualKey) & KeyPressedMask) == 0)
+                return;
+
+            long nowMs = Environment.TickCount64;
+            if (lastPressedAtMs.TryGetValue(virtualKey, out long lastMs) && nowMs - lastMs < PerKeyDebounceMs)
+                return;
+
+            lastPressedAtMs[virtualKey] = nowMs;
+            SafeRun(action);
+        }
+
+        private static void SafeRun(Action action)
         {
             try
             {
-                if (!patch.IsInstalled)
-                {
-                    patch.Install();
-                    Console.ForegroundColor = ConsoleColor.Magenta;
-                    Console.WriteLine($"[{DateTime.Now.ToLongTimeString()}] Trainer AKTYWNY! " +
-                                      $"Następne zdobycie XP = +{XpPatch.XpBonus:N0}.");
-                    Console.WriteLine($"  Nadpisane bajty gry: {BitConverter.ToString(patch.StolenOriginalBytes!)}");
-                }
-                else
-                {
-                    patch.Uninstall();
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.WriteLine($"[{DateTime.Now.ToLongTimeString()}] " +
-                                      "Trainer WYŁĄCZONY. Przywrócono normalne zdobywanie XP.");
-                }
+                action();
             }
             catch (Exception ex)
             {
-                // Błąd iniekcji nie powinien wywrócić całego programu - tylko go zgłaszamy.
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[BŁĄD] {ex.Message}");
-            }
-            finally
-            {
+                Console.WriteLine($"[BLAD] {ex.Message}");
                 Console.ResetColor();
             }
+        }
+
+        private static void ToggleXpPatch(XpPatch patch)
+        {
+            if (!patch.IsInstalled)
+            {
+                patch.Install();
+                Print(ConsoleColor.Magenta,
+                    $"Trainer XP AKTYWNY - nastepne zdobycie XP = +{XpPatch.XpBonus:N0}.");
+            }
+            else
+            {
+                patch.Uninstall();
+                Print(ConsoleColor.Yellow, "Trainer XP WYLACZONY.");
+            }
+        }
+
+        private static void ToggleTracker(ActiveHeroTracker tracker)
+        {
+            if (!tracker.IsInstalled)
+            {
+                tracker.Install();
+                Print(ConsoleColor.Magenta,
+                    "Tracker aktywnego bohatera AKTYWNY - wybierz bohatera w grze, by zlapac wskaznik.");
+            }
+            else
+            {
+                tracker.Uninstall();
+                Print(ConsoleColor.Yellow, "Tracker aktywnego bohatera WYLACZONY.");
+            }
+        }
+
+        private static bool TryRequireHero(ActiveHeroTracker tracker, out nint heroPtr)
+        {
+            if (!tracker.IsInstalled)
+            {
+                Print(ConsoleColor.Yellow, "Najpierw wlacz tracker bohatera (F3).");
+                heroPtr = 0;
+                return false;
+            }
+
+            if (!tracker.TryGetHeroPtr(out heroPtr))
+            {
+                Print(ConsoleColor.Yellow, "Brak aktywnego bohatera - wybierz bohatera w grze (klik na mapie).");
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void ShowSnapshot(GameMemory memory, ActiveHeroTracker tracker)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            HeroSnapshot s = HeroStats.Snapshot(memory, heroPtr);
+            Print(ConsoleColor.Cyan,
+                $"Bohater @ 0x{heroPtr:X}: " +
+                $"ATK={s.Attack} DEF={s.Defense} SP={s.SpellPower} KN={s.Knowledge} " +
+                $"LVL={s.CurrentLevel}->{s.ToLevel} XP={s.Experience:N0} " +
+                $"MANA={s.Mana}/{s.MaxMana}");
+        }
+
+        private static void SetStat(GameMemory memory, ActiveHeroTracker tracker, string name, int fieldOffset, int value)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            HeroStats.WriteInt32(memory, heroPtr, fieldOffset, value);
+            Print(ConsoleColor.Green, $"{name} = {value}");
+        }
+
+        private static void RefillMana(GameMemory memory, ActiveHeroTracker tracker)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            int max = HeroStats.ReadInt32(memory, heroPtr, HeroStats.MaxManaOffset);
+            HeroStats.WriteInt32(memory, heroPtr, HeroStats.ManaOffset, max);
+            Print(ConsoleColor.Green, $"Mana napelniona ({max}/{max}).");
+        }
+
+        private static void ToggleFreezeAttack(FreezeManager freeze)
+        {
+            bool nowFrozen = freeze.Toggle(HeroStats.AttackOffset, DefaultStatValue);
+            if (nowFrozen)
+                Print(ConsoleColor.Magenta, $"Atak ZAMROZONY na {DefaultStatValue}.");
+            else
+                Print(ConsoleColor.Yellow, "Atak ODMROZONY.");
+        }
+
+        private static void AddXp(GameMemory memory, ActiveHeroTracker tracker, int bonus)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            int current = HeroStats.ReadInt32(memory, heroPtr, HeroStats.ExperienceOffset);
+            int updated = current + bonus;
+            HeroStats.WriteInt32(memory, heroPtr, HeroStats.ExperienceOffset, updated);
+            Print(ConsoleColor.Green, $"XP {current:N0} -> {updated:N0} (+{bonus:N0}).");
+        }
+
+        private static void Print(ConsoleColor color, string message)
+        {
+            Console.ForegroundColor = color;
+            Console.WriteLine($"[{DateTime.Now.ToLongTimeString()}] {message}");
+            Console.ResetColor();
         }
 
         private static void PrintHeader()
         {
             Console.WriteLine("=============================================");
-            Console.WriteLine("  Heroes 5 XP Trainer (Console App)");
+            Console.WriteLine("  Heroes 5 Trainer (Console App)");
             Console.WriteLine("=============================================");
         }
 
-        /// <summary>Wypisuje potwierdzenie podpięcia oraz instrukcję obsługi.</summary>
         private static void PrintReady(GameTarget target)
         {
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"[SUKCES] Podpięto pod grę: {target.ModuleName}");
+            Console.WriteLine($"[SUKCES] Podpieto pod gre: {target.ModuleName}");
             Console.ResetColor();
             Console.WriteLine("---------------------------------------------");
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("INSTRUKCJA:");
-            Console.WriteLine("1. Wciśnij [F2] w dowolnym momencie gry, aby AKTYWOWAĆ modyfikację.");
-            Console.WriteLine("2. Wejdź w grze w jakąkolwiek interakcję dającą XP (walka, skrzynia).");
-            Console.WriteLine($"3. Twój bohater natychmiast otrzyma {XpPatch.XpBonus:N0} XP i wbije poziomy!");
+            Console.WriteLine("HOTKEYE:");
+            Console.WriteLine($"  [F2]  cave-bonus XP (kazde zdobycie XP = +{XpPatch.XpBonus:N0})");
+            Console.WriteLine( "  [F3]  wlacz/wylacz tracker aktywnego bohatera (warunek dla F4-F11)");
+            Console.WriteLine( "  [F4]  pokaz statystyki aktywnego bohatera");
+            Console.WriteLine($"  [F5]  atak       = {DefaultStatValue}");
+            Console.WriteLine($"  [F6]  obrona     = {DefaultStatValue}");
+            Console.WriteLine($"  [F7]  spell pow. = {DefaultStatValue}");
+            Console.WriteLine($"  [F8]  wiedza     = {DefaultStatValue}");
+            Console.WriteLine( "  [F9]  pelna mana");
+            Console.WriteLine($"  [F10] freeze ataku na {DefaultStatValue} (toggle)");
+            Console.WriteLine($"  [F11] +{XpQuickBonus:N0} XP");
             Console.ResetColor();
             Console.WriteLine("---------------------------------------------");
         }

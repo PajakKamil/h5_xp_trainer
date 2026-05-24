@@ -9,7 +9,12 @@ namespace Heroes5Trainer
     /// <param name="ProcessName">Nazwa procesu bez rozszerzenia .exe (do wyszukiwania procesu).</param>
     /// <param name="ModuleName">Nazwa modulu z rozszerzeniem .exe (do wyliczenia adresu bazowego).</param>
     /// <param name="CodeOffset">Offset instrukcji 'mov [edi+0x60], esi' wzgledem bazy modulu.</param>
-    internal sealed record GameTarget(string ProcessName, string ModuleName, int CodeOffset)
+    /// <param name="ActiveHeroHookOffset">
+    /// Offset instrukcji 'mov ecx, [esi+04]' wykonywanej setki razy/s, gdzie ECX zawiera
+    /// wskaznik na aktualnie wybranego bohatera. Sluzy do prewencyjnej modyfikacji statow.
+    /// Wartosc 0 oznacza "nieskonfigurowane dla tej wersji gry" - ActiveHeroTracker rzuci wyjatek.
+    /// </param>
+    internal sealed record GameTarget(string ProcessName, string ModuleName, int CodeOffset, int ActiveHeroHookOffset)
     {
         /// <summary>
         /// Wszystkie wersje gry, ktore trainer potrafi rozpoznac i zmodyfikowac.
@@ -18,8 +23,9 @@ namespace Heroes5Trainer
         /// </summary>
         public static readonly GameTarget[] KnownGames =
         {
-            new GameTarget("MMH55_64", "MMH55_64.exe", 0x5FBCE3),
-            new GameTarget("H5_Game",  "H5_Game.exe",  0x825BD8),
+            new GameTarget("MMH55_64", "MMH55_64.exe", 0x5FBCE3, 0x2A8E74),
+            // TODO: znajdz w CE analogiczna instrukcje 'mov reg, [reg+04]' z hero ptr dla H5_Game.exe
+            new GameTarget("H5_Game",  "H5_Game.exe",  0x825BD8, 0),
         };
 
         /// <summary>Nazwy procesow wszystkich obslugiwanych wersji gry (bez rozszerzenia .exe).</summary>
