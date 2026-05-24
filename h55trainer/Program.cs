@@ -7,7 +7,8 @@ namespace Heroes5Trainer
 {
     internal static class Program
     {
-        // Kody klawiszy Windows Virtual-Key (F2..F11).
+        // Kody klawiszy Windows Virtual-Key (F1..F12).
+        private const int KeyRefillMovement = 0x70;    // F1 - napelnij punkty ruchu
         private const int KeyXpPatchToggle = 0x71;     // F2 - cave XP bonus przy zdobyciu XP
         private const int KeyTrackerToggle = 0x72;     // F3 - install/uninstall ActiveHeroTracker
         private const int KeyShowSnapshot  = 0x73;     // F4 - wypisz statystyki aktywnego bohatera
@@ -18,6 +19,8 @@ namespace Heroes5Trainer
         private const int KeyRefillMana    = 0x78;     // F9
         private const int KeyToggleFreezeAttack = 0x79;// F10
         private const int KeyAddXp         = 0x7A;     // F11
+        private const int KeyDumpHero      = 0x7B;     // F12 - hex dump struktury bohatera
+        private const int KeyMaxMoraleLuck = 0xBB;     // '=' (VK_OEM_PLUS) - morale + luck = DefaultStatValue
 
         private const int KeyPressedMask = 0x8000;
 
@@ -27,6 +30,9 @@ namespace Heroes5Trainer
         private const int IdleDelayMs = 10;
         private const int DefaultStatValue = 99;
         private const int XpQuickBonus = 1_000_000;
+        // Ile bajtow struktury bohatera zrzucac na zadanie F12.
+        // 0x180 pokrywa znane pola (atak..maxmana na 0x140) z zapasem na sasiednie.
+        private const int HeroDumpLength = 0x180;
 
         private static void Main()
         {
@@ -91,6 +97,7 @@ namespace Heroes5Trainer
 
             while (memory.IsGameRunning)
             {
+                HandleKey(KeyRefillMovement,     lastPressedAtMs, () => RefillMovement(memory, tracker));
                 HandleKey(KeyXpPatchToggle,      lastPressedAtMs, () => ToggleXpPatch(xpPatch));
                 HandleKey(KeyTrackerToggle,      lastPressedAtMs, () => ToggleTracker(tracker));
                 HandleKey(KeyShowSnapshot,       lastPressedAtMs, () => ShowSnapshot(memory, tracker));
@@ -101,6 +108,8 @@ namespace Heroes5Trainer
                 HandleKey(KeyRefillMana,         lastPressedAtMs, () => RefillMana(memory, tracker));
                 HandleKey(KeyToggleFreezeAttack, lastPressedAtMs, () => ToggleFreezeAttack(freeze));
                 HandleKey(KeyAddXp,              lastPressedAtMs, () => AddXp(memory, tracker, XpQuickBonus));
+                HandleKey(KeyDumpHero,           lastPressedAtMs, () => DumpHero(memory, tracker));
+                HandleKey(KeyMaxMoraleLuck,      lastPressedAtMs, () => MaxMoraleAndLuck(memory, tracker));
 
                 Thread.Sleep(IdleDelayMs);
             }
@@ -191,7 +200,7 @@ namespace Heroes5Trainer
                 $"Bohater @ 0x{heroPtr:X}: " +
                 $"ATK={s.Attack} DEF={s.Defense} SP={s.SpellPower} KN={s.Knowledge} " +
                 $"LVL={s.CurrentLevel}->{s.ToLevel} XP={s.Experience:N0} " +
-                $"MANA={s.Mana}/{s.MaxMana}");
+                $"MANA={s.Mana}/{s.MaxMana} RUCH={s.Movement}/{s.MovementMax}");
         }
 
         private static void SetStat(GameMemory memory, ActiveHeroTracker tracker, string name, int fieldOffset, int value)
@@ -201,6 +210,16 @@ namespace Heroes5Trainer
 
             HeroStats.WriteInt32(memory, heroPtr, fieldOffset, value);
             Print(ConsoleColor.Green, $"{name} = {value}");
+        }
+
+        private static void RefillMovement(GameMemory memory, ActiveHeroTracker tracker)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            int max = HeroStats.ReadInt32(memory, heroPtr, HeroStats.MovementMaxOffset);
+            HeroStats.WriteInt32(memory, heroPtr, HeroStats.MovementCurrentOffset, max);
+            Print(ConsoleColor.Green, $"Ruch napelniony ({max}/{max}).");
         }
 
         private static void RefillMana(GameMemory memory, ActiveHeroTracker tracker)
@@ -233,6 +252,28 @@ namespace Heroes5Trainer
             Print(ConsoleColor.Green, $"XP {current:N0} -> {updated:N0} (+{bonus:N0}).");
         }
 
+        private static void MaxMoraleAndLuck(GameMemory memory, ActiveHeroTracker tracker)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            // Slot A wystarcza by podniesc statystyke; slot B nie ruszamy, by nie nadpisac
+            // bonusow z innych zrodel ktore gra moze tam trzymac (sklad armii, skille).
+            HeroStats.WriteInt32(memory, heroPtr, HeroStats.MoraleBonusOffsetA, DefaultStatValue);
+            HeroStats.WriteInt32(memory, heroPtr, HeroStats.LuckBonusOffsetA,   DefaultStatValue);
+            Print(ConsoleColor.Green, $"Morale i Luck = {DefaultStatValue} (bonus do bazy).");
+        }
+
+        private static void DumpHero(GameMemory memory, ActiveHeroTracker tracker)
+        {
+            if (!TryRequireHero(tracker, out nint heroPtr))
+                return;
+
+            string dump = HeroStats.DumpHex(memory, heroPtr, HeroDumpLength);
+            Print(ConsoleColor.Cyan, $"Dump struktury bohatera @ 0x{heroPtr:X} ({HeroDumpLength} bajtow):");
+            Console.Write(dump);
+        }
+
         private static void Print(ConsoleColor color, string message)
         {
             Console.ForegroundColor = color;
@@ -255,6 +296,7 @@ namespace Heroes5Trainer
             Console.WriteLine("---------------------------------------------");
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("HOTKEYE:");
+            Console.WriteLine( "  [F1]  napelnij punkty ruchu");
             Console.WriteLine($"  [F2]  cave-bonus XP (kazde zdobycie XP = +{XpPatch.XpBonus:N0})");
             Console.WriteLine( "  [F3]  wlacz/wylacz tracker aktywnego bohatera (warunek dla F4-F11)");
             Console.WriteLine( "  [F4]  pokaz statystyki aktywnego bohatera");
@@ -265,6 +307,8 @@ namespace Heroes5Trainer
             Console.WriteLine( "  [F9]  pelna mana");
             Console.WriteLine($"  [F10] freeze ataku na {DefaultStatValue} (toggle)");
             Console.WriteLine($"  [F11] +{XpQuickBonus:N0} XP");
+            Console.WriteLine($"  [F12] hex dump struktury bohatera ({HeroDumpLength} bajtow) - do szukania nieznanych pol");
+            Console.WriteLine($"  [=]   morale + luck = {DefaultStatValue} (bonus do bazy)");
             Console.ResetColor();
             Console.WriteLine("---------------------------------------------");
         }
