@@ -63,9 +63,17 @@ namespace Heroes5Trainer
 
             originalBytes = memory.ReadBytes(hookAddress, StolenByteCount);
 
-            for (int i = 0; i < ExpectedOriginalBytes.Length; i++)
+            if (!BytesMatchExpected(originalBytes))
             {
-                if (originalBytes[i] != ExpectedOriginalBytes[i])
+                // Bajty nie sa oryginalne. Jesli pierwszy bajt to nasz JMP, znaczy to ze poprzednia
+                // instancja trainera zostala zamknieta bez Uninstall - przywracamy oryginal i
+                // instalujemy swiezo (stara alokacja code cave przepadnie z procesem gry).
+                if (originalBytes[0] == JumpOpcode)
+                {
+                    memory.WriteBytes(hookAddress, ExpectedOriginalBytes);
+                    originalBytes = (byte[])ExpectedOriginalBytes.Clone();
+                }
+                else
                 {
                     throw new InvalidOperationException(
                         "Bajty pod adresem hooka aktywnego bohatera nie pasuja do oczekiwanej instrukcji. " +
@@ -128,6 +136,16 @@ namespace Heroes5Trainer
 
             // Adres w grze 32-bitowej - bezpiecznie konwertujemy do nint.
             heroPtr = (nint)(uint)raw;
+            return true;
+        }
+
+        private static bool BytesMatchExpected(byte[] bytes)
+        {
+            for (int i = 0; i < ExpectedOriginalBytes.Length; i++)
+            {
+                if (bytes[i] != ExpectedOriginalBytes[i])
+                    return false;
+            }
             return true;
         }
 

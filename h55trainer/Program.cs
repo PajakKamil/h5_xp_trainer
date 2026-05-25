@@ -39,7 +39,9 @@ namespace Heroes5Trainer
             Console.OutputEncoding = Encoding.UTF8;
             Console.Title = "Heroes 5 Trainer - Console Edition";
             PrintHeader();
-
+            
+            Task.Run(ListenToTauriCommands);
+            
             while (true)
             {
                 using GameMemory memory = new GameMemory();
@@ -65,6 +67,19 @@ namespace Heroes5Trainer
                 Console.WriteLine();
                 Console.WriteLine("[INFO] Gra zostala zamknieta. Powrot do oczekiwania na gre...");
                 Console.ResetColor();
+            }
+        }
+
+        private static async Task ListenToTauriCommands()
+        {
+            while (true)
+            {
+                var command = Console.ReadLine();
+                if (command == null) break;
+                if (string.IsNullOrWhiteSpace(command)) continue;
+                Console.WriteLine($"Nieznana komenda: {command}");
+                await Console.Out.FlushAsync();
+                break;
             }
         }
 

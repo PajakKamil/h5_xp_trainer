@@ -5,6 +5,17 @@
         <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <PublishAot>true</PublishAot>
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+        <SelfContained>true</SelfContained>
+        <PublishSingleFile>true</PublishSingleFile>
     </PropertyGroup>
+
+    <Target Name="CopyExeToSidecars" AfterTargets="Publish">
+        <Message Importance="High" Text="Copying $(PublishDir)$(TargetName).exe to D:\src\Rust\heroes5.5_trainer\sidecars\h55_trainer-x86_64-pc-windows-msvc.exe" />
+        <Copy SourceFiles="$(PublishDir)$(TargetName).exe" DestinationFiles="D:\src\Rust\heroes5.5_trainer\sidecars\h55_trainer-x86_64-pc-windows-msvc.exe" SkipUnchangedFiles="true" Condition="Exists('$(PublishDir)$(TargetName).exe')" />
+    </Target>
+    
+    
 
 </Project>

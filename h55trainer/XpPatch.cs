@@ -19,6 +19,11 @@ namespace Heroes5Trainer
         // Oryginalna instrukcja gry pod adresem hooka: 'mov [edi+0x60], esi'.
         private static readonly byte[] ExpectedOriginalBytes = { 0x89, 0x77, 0x60 };
 
+        // Pelne 6 bajtow nadpisanych przez hook ('mov [edi+0x60],esi' + 'mov edx,[ebp+0x00]').
+        // Uzywane do recovery po niedoczyszczonej poprzedniej instancji trainera, gdy
+        // druga instrukcja w grze jest juz nadpisana NOP-em i nie da sie jej odczytac.
+        private static readonly byte[] FullOriginalBytes = { 0x89, 0x77, 0x60, 0x8B, 0x55, 0x00 };
+
         // WAZNE: tyle bajtow nadpisujemy w miejscu hooka. Wartosc musi byc:
         //  - co najmniej 5 (tyle zajmuje instrukcja 'jmp rel32'),
         //  - rowna pelnej liczbie CALYCH instrukcji liczonych od adresu hooka.
@@ -67,9 +72,19 @@ namespace Heroes5Trainer
             originalBytes = memory.ReadBytes(hookAddress, StolenByteCount);
 
             // Bezpiecznik: sprawdzamy, czy pod adresem faktycznie jest spodziewana instrukcja.
-            for (int i = 0; i < ExpectedOriginalBytes.Length; i++)
+            // Jesli nie, ale pierwszy bajt to nasz JMP - znaczy ze poprzednia instancja trainera
+            // nie zrobila Uninstall (np. zamknieta przez X). Przywracamy oryginal i instalujemy
+            // swiezo (stara alokacja code cave przepadnie z procesem gry).
+            if (!BytesMatchExpected(originalBytes))
             {
-                if (originalBytes[i] != ExpectedOriginalBytes[i])
+                if (originalBytes[0] == JumpOpcode)
+                {
+                    // Przywracamy pelne 6 bajtow z hardkodu - druga instrukcja w grze jest
+                    // juz NOP-em po naszym poprzednim hooku, nie da sie jej odczytac.
+                    memory.WriteBytes(hookAddress, FullOriginalBytes);
+                    originalBytes = (byte[])FullOriginalBytes.Clone();
+                }
+                else
                 {
                     throw new InvalidOperationException(
                         "Bajty pod adresem hooka nie pasuja do oczekiwanej instrukcji gry. " +
@@ -108,6 +123,16 @@ namespace Heroes5Trainer
             memory.WriteBytes(hookAddress, originalBytes!);
             memory.Free(caveAddress);
             caveAddress = 0;
+        }
+
+        private static bool BytesMatchExpected(byte[] bytes)
+        {
+            for (int i = 0; i < ExpectedOriginalBytes.Length; i++)
+            {
+                if (bytes[i] != ExpectedOriginalBytes[i])
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>
