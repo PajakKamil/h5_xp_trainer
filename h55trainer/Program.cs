@@ -76,7 +76,7 @@ namespace Heroes5Trainer
                 using FreezeManager freeze = new FreezeManager(memory, tracker);
                 freeze.Start();
 
-                TrainerSession session = new TrainerSession(memory, xpPatch, tracker, freeze);
+                TrainerSession session = new TrainerSession(memory, target, xpPatch, tracker, freeze);
                 CurrentSession = session;
 
                 JsonOut.Emit("GameAttached", $"Podpieto pod gre: {target.ModuleName}",
@@ -129,6 +129,14 @@ namespace Heroes5Trainer
                 CheckHotkey(VkOemPlus,  alt: false, lastPressedAtMs, "DumpHero",  session);
                 CheckHotkey(Vk1, alt: true,  lastPressedAtMs, "SetMorale",        session);
                 CheckHotkey(Vk2, alt: true,  lastPressedAtMs, "SetLuck",          session);
+                CheckHotkey(Vk3, alt: true,  lastPressedAtMs, "AddWood",          session);
+                CheckHotkey(Vk4, alt: true,  lastPressedAtMs, "AddOre",           session);
+                CheckHotkey(Vk5, alt: true,  lastPressedAtMs, "AddMercury",       session);
+                CheckHotkey(Vk6, alt: true,  lastPressedAtMs, "AddSulfur",        session);
+                CheckHotkey(Vk7, alt: true,  lastPressedAtMs, "AddCrystal",       session);
+                CheckHotkey(Vk8, alt: true,  lastPressedAtMs, "AddGems",          session);
+                CheckHotkey(Vk9, alt: true,  lastPressedAtMs, "AddGold",          session);
+                CheckHotkey(Vk0, alt: true,  lastPressedAtMs, "SetMovement",      session);
 
                 Thread.Sleep(IdleDelayMs);
             }
@@ -441,6 +449,40 @@ namespace Heroes5Trainer
                 data: $"{{\"value\":{value}}}");
         }
 
+        internal static void DoSetMovement(TrainerSession s, int? v)
+        {
+            if (!TryRequireHero(s.Tracker, out nint heroPtr)) return;
+            int value = v!.Value;
+            HeroStats.WriteInt32(s.Memory, heroPtr, HeroStats.MovementCurrentOffset, value);
+            JsonOut.Emit("SetMovement", $"Ruch ustawiony na {value:N0}.",
+                data: $"{{\"value\":{value}}}");
+        }
+
+        internal static void DoAddWood(TrainerSession s, int? v)    => AddResource(s, ResourceKind.Wood,    "drewno",    v!.Value);
+        internal static void DoAddOre(TrainerSession s, int? v)     => AddResource(s, ResourceKind.Ore,     "ruda",      v!.Value);
+        internal static void DoAddMercury(TrainerSession s, int? v) => AddResource(s, ResourceKind.Mercury, "rtec",      v!.Value);
+        internal static void DoAddSulfur(TrainerSession s, int? v)  => AddResource(s, ResourceKind.Sulfur,  "siarka",    v!.Value);
+        internal static void DoAddCrystal(TrainerSession s, int? v) => AddResource(s, ResourceKind.Crystal, "krysztaly", v!.Value);
+        internal static void DoAddGems(TrainerSession s, int? v)    => AddResource(s, ResourceKind.Gems,    "klejnoty",  v!.Value);
+        internal static void DoAddGold(TrainerSession s, int? v)    => AddResource(s, ResourceKind.Gold,    "zloto",     v!.Value);
+
+        private static void AddResource(TrainerSession s, ResourceKind kind, string name, int delta)
+        {
+            if (!ResourceState.TryResolveResourcesBase(s.Memory, s.Target, out nint resBase))
+            {
+                JsonOut.Emit("Warning",
+                    "Nie udalo sie wyliczyc adresu zasobow - sciezka wskaznikow niezainicjalizowana " +
+                    "(brak aktywnego gracza/wczytanego save'a) lub nieobslugiwana wersja gry.");
+                return;
+            }
+
+            (int before, int after) = ResourceState.Add(s.Memory, resBase, kind, delta);
+            JsonOut.Emit("AddResource",
+                $"{name}: {before:N0} -> {after:N0} ({(delta >= 0 ? "+" : "")}{delta:N0}).",
+                data: $"{{\"resource\":\"{JsonOut.Escape(name)}\",\"kind\":{(int)kind}," +
+                      $"\"before\":{before},\"after\":{after},\"delta\":{delta}}}");
+        }
+
         private static bool TryRequireHero(ActiveHeroTracker tracker, out nint heroPtr)
         {
             if (!tracker.IsInstalled)
@@ -493,7 +535,15 @@ namespace Heroes5Trainer
             sb.Append($"[Ctrl+-] AddXp (+{XpQuickBonus:N0}); ");
             sb.Append($"[Ctrl+=] DumpHero ({HeroDumpLength}B); ");
             sb.Append($"[Ctrl+Alt+1] SetMorale={DefaultStatValue}; ");
-            sb.Append($"[Ctrl+Alt+2] SetLuck={DefaultStatValue}");
+            sb.Append($"[Ctrl+Alt+2] SetLuck={DefaultStatValue}; ");
+            sb.Append("[Ctrl+Alt+3] AddWood (+99); ");
+            sb.Append("[Ctrl+Alt+4] AddOre (+99); ");
+            sb.Append("[Ctrl+Alt+5] AddMercury (+99); ");
+            sb.Append("[Ctrl+Alt+6] AddSulfur (+99); ");
+            sb.Append("[Ctrl+Alt+7] AddCrystal (+99); ");
+            sb.Append("[Ctrl+Alt+8] AddGems (+99); ");
+            sb.Append("[Ctrl+Alt+9] AddGold (+999 999); ");
+            sb.Append("[Ctrl+Alt+0] SetMovement=999 999");
 
             string data =
                 "{\"hotkeys\":[" +
@@ -510,7 +560,15 @@ namespace Heroes5Trainer
                 "{\"keys\":\"Ctrl+-\",\"command\":\"AddXp\"}," +
                 "{\"keys\":\"Ctrl+=\",\"command\":\"DumpHero\"}," +
                 "{\"keys\":\"Ctrl+Alt+1\",\"command\":\"SetMorale\"}," +
-                "{\"keys\":\"Ctrl+Alt+2\",\"command\":\"SetLuck\"}" +
+                "{\"keys\":\"Ctrl+Alt+2\",\"command\":\"SetLuck\"}," +
+                "{\"keys\":\"Ctrl+Alt+3\",\"command\":\"AddWood\"}," +
+                "{\"keys\":\"Ctrl+Alt+4\",\"command\":\"AddOre\"}," +
+                "{\"keys\":\"Ctrl+Alt+5\",\"command\":\"AddMercury\"}," +
+                "{\"keys\":\"Ctrl+Alt+6\",\"command\":\"AddSulfur\"}," +
+                "{\"keys\":\"Ctrl+Alt+7\",\"command\":\"AddCrystal\"}," +
+                "{\"keys\":\"Ctrl+Alt+8\",\"command\":\"AddGems\"}," +
+                "{\"keys\":\"Ctrl+Alt+9\",\"command\":\"AddGold\"}," +
+                "{\"keys\":\"Ctrl+Alt+0\",\"command\":\"SetMovement\"}" +
                 "]}";
 
             JsonOut.Emit("Hotkeys", sb.ToString(), data: data);
@@ -575,6 +633,7 @@ namespace Heroes5Trainer
     internal sealed class TrainerSession
     {
         public GameMemory Memory { get; }
+        public GameTarget Target { get; }
         public XpPatch XpPatch { get; }
         public ActiveHeroTracker Tracker { get; }
         public FreezeManager Freeze { get; }
@@ -587,6 +646,14 @@ namespace Heroes5Trainer
         private const int XpDefault = 1_000_000;
         private const int XpMin = -2_000_000_000;
         private const int XpMax =  2_000_000_000;
+
+        // Default delty zasobow musza siedziec po stronie sesji, bo CommandSpec inicjalizujemy statycznie.
+        private const int ResDefault = 99;
+        private const int GoldDefault = 999_999;
+        private const int ResMin = int.MinValue;
+        private const int ResMax = int.MaxValue;
+        // Default dla SetMovement - "nieskonczony" ruch, gra obetnie wyswietlanie do swojego limitu.
+        private const int MovementBigValue = 999_999;
 
         private static readonly Dictionary<string, CommandSpec> Specs =
             new Dictionary<string, CommandSpec>(StringComparer.OrdinalIgnoreCase)
@@ -605,6 +672,14 @@ namespace Heroes5Trainer
                 ["DumpHero"]           = new(Program.DoDumpHero,          "Emituje hex dump struktury bohatera (384 bajty).", null),
                 ["SetMorale"]          = new(Program.DoSetMorale,         "Ustawia bonus morale bohatera (slot A).", new ValueSpec("morale", MinStat, MaxStat, DefaultStat)),
                 ["SetLuck"]            = new(Program.DoSetLuck,           "Ustawia bonus luck bohatera (slot A).",   new ValueSpec("luck",   MinStat, MaxStat, DefaultStat)),
+                ["AddWood"]            = new(Program.DoAddWood,           "Dodaje delta do drewna aktywnego gracza.",    new ValueSpec("delta", ResMin, ResMax, ResDefault)),
+                ["AddOre"]             = new(Program.DoAddOre,            "Dodaje delta do rudy aktywnego gracza.",      new ValueSpec("delta", ResMin, ResMax, ResDefault)),
+                ["AddMercury"]         = new(Program.DoAddMercury,        "Dodaje delta do rteci aktywnego gracza.",     new ValueSpec("delta", ResMin, ResMax, ResDefault)),
+                ["AddSulfur"]          = new(Program.DoAddSulfur,         "Dodaje delta do siarki aktywnego gracza.",    new ValueSpec("delta", ResMin, ResMax, ResDefault)),
+                ["AddCrystal"]         = new(Program.DoAddCrystal,        "Dodaje delta do krysztalow aktywnego gracza.", new ValueSpec("delta", ResMin, ResMax, ResDefault)),
+                ["AddGems"]            = new(Program.DoAddGems,           "Dodaje delta do klejnotow aktywnego gracza.", new ValueSpec("delta", ResMin, ResMax, ResDefault)),
+                ["AddGold"]            = new(Program.DoAddGold,           "Dodaje delta do zlota aktywnego gracza.",     new ValueSpec("delta", ResMin, ResMax, GoldDefault)),
+                ["SetMovement"]        = new(Program.DoSetMovement,       "Ustawia punkty ruchu bohatera na podana wartosc (domyslnie ~nieskonczony).", new ValueSpec("movement", MinStat, ResMax, MovementBigValue)),
             };
 
         public static IReadOnlyDictionary<string, CommandSpec> AllSpecs => Specs;
@@ -612,10 +687,11 @@ namespace Heroes5Trainer
         public static CommandSpec? FindSpec(string command) =>
             Specs.TryGetValue(command, out CommandSpec? spec) ? spec : null;
 
-        public TrainerSession(GameMemory memory, XpPatch xpPatch,
+        public TrainerSession(GameMemory memory, GameTarget target, XpPatch xpPatch,
                               ActiveHeroTracker tracker, FreezeManager freeze)
         {
             Memory = memory;
+            Target = target;
             XpPatch = xpPatch;
             Tracker = tracker;
             Freeze = freeze;
