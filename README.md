@@ -76,3 +76,6 @@ Wszystkie hotkeye używają modyfikatora **Ctrl** (część dodatkowo **Alt**). 
 - **Uprawnienia:** Program wymaga uprawnień administratora do modyfikacji pamięci procesu gry.
 - **Save / load:** Wszystkie zapisy działają tylko na bieżącej sesji - po wczytaniu save'a zmodyfikowane wartości NIE są przywracane przez trainer (trzeba zaaplikować ponownie). Adresy wskaźników są stabilne między save'ami i restartami gry.
 - **Zasoby - nieobsługiwana wersja gry:** Jeśli komenda zasobowa zwraca `Warning: Nie udalo sie wyliczyc adresu zasobow`, znaczy że dla danej wersji procesu nie ma skonfigurowanej ścieżki wskaźników (na razie tylko `MMH55_64.exe`).
+
+## Powiązane projekty
+- [Codex Heroum V - Trainer](https://github.com/PajakKamil/Heroes5.5Trainer) - wizualną nakładką (UI) z interfejsem graficznym
